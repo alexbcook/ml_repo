@@ -1,0 +1,78 @@
+---
+title: "Weightlifting Form Prediction Analysis"
+author: "Alex Cook"
+date: "December 24, 2015"
+output: html_document
+---
+
+### Executive Summary
+The purpose of this analysis is to use regression and machine learning algorithms to predict the form (referred to as "class" in the dataset) used by a weightlifter based on observed accelerometer data. Participants performed the lift using one of 5 "classes": using proper form, or making one of 4 common mistakes. Based on the observed accelerometer data we will build a model that will attempt to predict to which class the lift belongs, and then measure the accuracy of our model.
+
+### Methods
+First we will load the data and split it into training and test sets, perform some exploratory analysis (not included here) and then begin building our model.
+
+```{r cache=T}
+set.seed(12345)
+library(caret)
+##setwd("/Users/alexcook/datasciencecoursera")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv","train.csv",method="curl")
+train<-read.csv("train.csv")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv","test.csv",method="curl")
+test<-read.csv("test.csv")
+```
+
+The vast majority of the data is in the training set (nearly 20k obs), whereas the test set has only 20 obs. For cross-validation we will break up the training set but even so this is a very large dataset. There are also 160 variables, and it is unlikely that we will need them all for the analysis. There are lots of variables with NAs in the data as well.
+
+```{r cache=TRUE}
+## Remove fields with small variance
+train2<-train[,-nearZeroVar(train)]
+test2<-test[,-nearZeroVar(train)]
+## Thanks to Michael Szczepaniak for this code
+getFractionMissing <- function(df = rawActitivity) {
+    colCount <- ncol(df)
+    returnDf <- data.frame(index=1:ncol(df),
+                           columnName=rep("undefined", colCount),
+                           FractionMissing=rep(-1, colCount),
+                           stringsAsFactors=FALSE)
+    for(i in 1:colCount) {
+        colVector <- df[,i]
+        missingCount <- length(which(colVector == "") * 1)
+        missingCount <- missingCount + sum(is.na(colVector) * 1)
+        returnDf$columnName[i] <- as.character(names(df)[i])
+        returnDf$FractionMissing[i] <- missingCount / length(colVector)
+    }
+    
+    return(returnDf)
+}
+res<-getFractionMissing(train2)
+res2<-res[which(res$FractionMissing>.9),1]
+
+## Remove variables with >90% of data being zero
+train3<-train2[,-res2]
+test3<-test2[,-res2]
+
+## Remove 1st 6 columns which are timestamps, counter, etc. and are not needed for the analysis
+train4<-train3[,-c(1:6)]
+test4<-test3[,-c(1:6)]
+
+```
+
+We are now ready to train our model. We will first do a simple classification tree on all the variables (except for our outcome, classe) to try to predict the class of exercise.
+
+``` {r cache=T}
+modreg<-train(classe~.,data=train4,method="rpart")
+confusionMatrix(predict(modreg,newdata=train4),train4$classe)
+```
+
+Using the defaults for this model is not very accurate, even on the training set itself, with an accuracy rate of less than 50%. As a result, we will try to build a more accurate model on the training set using random forests. To do cross-validation, we'll split the "train4" set 80-20 into a sub-training and sub-test set, then test our model against the sub-test set to get the estimated out-of-sample error rate. Finally, we'll print out our predictions on the true test set.
+
+``` {r cache=T}
+library(randomForest)
+inSubTrain<-createDataPartition(y=train4$classe,p=.8,list=F)
+subTrain<-train4[inSubTrain,]
+subTest<-train4[-inSubTrain,]
+modrf<-randomForest(y=subTrain$classe,x=subTrain[,c(1:52)],data=subTrain)
+confusionMatrix(predict(modrf,newdata=subTest),subTest$classe)
+```
+
+This simple random forest model was 99.4% accurate on the cross-validated sub-test set, which gives us a good idea of the actual out-of-sample error rate and indication of how it would perform on the true test set of 20 observations. 
